@@ -1,0 +1,63 @@
+name: Audit and Backfill Garmin CN to Garmin Global
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "audit only, or backfill missing CN activities into Global"
+        required: true
+        default: audit
+        type: choice
+        options:
+          - audit
+          - backfill
+      fetch_limit:
+        description: "How many recent activities to fetch from each side"
+        required: true
+        default: "500"
+      backfill_limit:
+        description: "Maximum missing activities to upload in one run"
+        required: true
+        default: "50"
+      start_date:
+        description: "Optional activity start date, YYYY-MM-DD"
+        required: false
+      end_date:
+        description: "Optional activity end date, YYYY-MM-DD"
+        required: false
+
+env:
+  BARK_KEY: ${{ secrets.BARK_KEY }}
+  GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
+  GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+  GARMIN_GLOBAL_USERNAME: ${{ secrets.GARMIN_GLOBAL_USERNAME }}
+  GARMIN_GLOBAL_PASSWORD: ${{ secrets.GARMIN_GLOBAL_PASSWORD }}
+  GARMIN_CN_OAUTH1: ${{ secrets.GARMIN_CN_OAUTH1 }}
+  GARMIN_CN_OAUTH2: ${{ secrets.GARMIN_CN_OAUTH2 }}
+  GARMIN_GLOBAL_OAUTH1: ${{ secrets.GARMIN_GLOBAL_OAUTH1 }}
+  GARMIN_GLOBAL_OAUTH2: ${{ secrets.GARMIN_GLOBAL_OAUTH2 }}
+  GARMIN_BACKFILL_MODE: ${{ inputs.mode }}
+  GARMIN_AUDIT_LIMIT: ${{ inputs.fetch_limit }}
+  GARMIN_BACKFILL_LIMIT: ${{ inputs.backfill_limit }}
+  GARMIN_BACKFILL_START: ${{ inputs.start_date }}
+  GARMIN_BACKFILL_END: ${{ inputs.end_date }}
+  GARMIN_OUTAGE_START: "2025-07-14"
+
+jobs:
+  audit-backfill:
+    runs-on: ubuntu-latest
+    name: Audit and Backfill Garmin CN to Garmin Global
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "yarn"
+      - run: yarn
+      - run: yarn audit_backfill_cn_to_global
+        timeout-minutes: 30
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Save Garmin Session

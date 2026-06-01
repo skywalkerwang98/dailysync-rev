@@ -11,6 +11,7 @@ lib/
 pyvenv.cfg
 
 .cache
+.codex-yarn-cache
 *.pyc
 node_modules
 yarn-error.log
