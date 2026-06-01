@@ -16,6 +16,7 @@ type CompareResult = {
     globalActivities: Activity[];
     missingInGlobal: Activity[];
     suspiciousMatches: MatchedActivity[];
+    fuzzyMatches: MatchedActivity[];
 };
 
 const DEFAULT_LIMIT = 500;
@@ -68,11 +69,34 @@ const getStartTime = (activity: Activity): string => activity.startTimeLocal ?? 
 
 const getActivityType = (activity: Activity): string => activity.activityType?.typeKey ?? '';
 
+const getActivityDate = (activity: Activity): string => getStartTime(activity).slice(0, 10);
+
+const getActivityCategory = (activity: Activity): string => {
+    const typeKey = getActivityType(activity);
+    if (typeKey.includes('running')) {
+        return 'running';
+    }
+    if (typeKey.includes('cycling') || typeKey.includes('biking')) {
+        return 'cycling';
+    }
+    if (typeKey.includes('cardio')) {
+        return 'cardio';
+    }
+    if (typeKey.includes('strength')) {
+        return 'strength';
+    }
+    return typeKey;
+};
+
 const getDistance = (activity: Activity): number => Number(activity.distance ?? 0);
 
 const getDuration = (activity: Activity): number => Number(activity.duration ?? activity.elapsedDuration ?? 0);
 
 const getActivityKey = (activity: Activity): string => `${getStartTime(activity)}|${getActivityType(activity)}`;
+
+const getDistanceTolerance = (activity: Activity): number => Math.max(DEFAULT_DISTANCE_TOLERANCE_METERS, getDistance(activity) * 0.01);
+
+const getDurationTolerance = (activity: Activity): number => Math.max(DEFAULT_DURATION_TOLERANCE_SECONDS, getDuration(activity) * 0.02);
 
 const maskActivityId = (activityId: unknown): string => {
     const value = String(activityId ?? '');
@@ -171,12 +195,39 @@ const findMissingActivities = (
 
     const missingInGlobal: Activity[] = [];
     const suspiciousMatches: MatchedActivity[] = [];
+    const fuzzyMatches: MatchedActivity[] = [];
+
+    const findFuzzyMatch = (cnActivity: Activity): MatchedActivity | undefined => {
+        const candidates = globalActivities
+            .filter((globalActivity) => getActivityDate(globalActivity) === getActivityDate(cnActivity))
+            .filter((globalActivity) => getActivityCategory(globalActivity) === getActivityCategory(cnActivity))
+            .map((globalActivity) => {
+                const distanceDiffMeters = Math.abs(getDistance(cnActivity) - getDistance(globalActivity));
+                const durationDiffSeconds = Math.abs(getDuration(cnActivity) - getDuration(globalActivity));
+                return { cnActivity, globalActivity, distanceDiffMeters, durationDiffSeconds };
+            })
+            .filter((match) => (
+                match.distanceDiffMeters <= getDistanceTolerance(cnActivity) &&
+                match.durationDiffSeconds <= getDurationTolerance(cnActivity)
+            ))
+            .sort((a, b) => (
+                (a.distanceDiffMeters + a.durationDiffSeconds) -
+                (b.distanceDiffMeters + b.durationDiffSeconds)
+            ));
+
+        return candidates[0];
+    };
 
     cnActivities
         .filter((activity) => isInDateWindow(activity, startDate, endDate))
         .forEach((cnActivity) => {
             const globalActivity = globalByKey.get(getActivityKey(cnActivity));
             if (!globalActivity) {
+                const fuzzyMatch = findFuzzyMatch(cnActivity);
+                if (fuzzyMatch) {
+                    fuzzyMatches.push(fuzzyMatch);
+                    return;
+                }
                 missingInGlobal.push(cnActivity);
                 return;
             }
@@ -191,13 +242,14 @@ const findMissingActivities = (
             }
         });
 
-    return { cnActivities, globalActivities, missingInGlobal, suspiciousMatches };
+    return { cnActivities, globalActivities, missingInGlobal, suspiciousMatches, fuzzyMatches };
 };
 
 const printCompareResult = (result: CompareResult, backfillLimit: number) => {
     console.log(`CN activities fetched: ${result.cnActivities.length}`);
     console.log(`Global activities fetched: ${result.globalActivities.length}`);
     console.log(`Missing in Global: ${result.missingInGlobal.length}`);
+    console.log(`Fuzzy matches: ${result.fuzzyMatches.length}`);
     console.log(`Suspicious matches: ${result.suspiciousMatches.length}`);
 
     result.missingInGlobal.slice(0, backfillLimit).forEach((activity, index) => {
@@ -211,6 +263,14 @@ const printCompareResult = (result: CompareResult, backfillLimit: number) => {
     result.suspiciousMatches.slice(0, 20).forEach((match, index) => {
         console.log(
             `SUSPICIOUS[${index + 1}]: ${summarizeActivity(match.cnActivity)} | ` +
+            `distanceDiff=${match.distanceDiffMeters.toFixed(1)}m durationDiff=${match.durationDiffSeconds.toFixed(1)}s`,
+        );
+    });
+
+    result.fuzzyMatches.slice(0, 20).forEach((match, index) => {
+        console.log(
+            `FUZZY_MATCH[${index + 1}]: ${summarizeActivity(match.cnActivity)} | ` +
+            `global=${summarizeActivity(match.globalActivity)} | ` +
             `distanceDiff=${match.distanceDiffMeters.toFixed(1)}m durationDiff=${match.durationDiffSeconds.toFixed(1)}s`,
         );
     });
